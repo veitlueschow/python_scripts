@@ -1,0 +1,145 @@
+import sys
+sys.path.insert(0, '/home/mpim/m300522/mod_data')
+
+import get_coastline as coasti
+from netCDF4 import Dataset
+import numpy as np
+from matplotlib import cm
+import matplotlib.pyplot as plt
+import decomp_plots as decplot
+
+#filename ="check_box_2140"
+#filename ="box3_1941.5"
+#filename ="box4"
+#filename ="lev_code_mean_box4_2008"
+filename = "90er_mean_box"
+
+
+fh = Dataset(filename,mode='r')
+
+uko_ 	= fh.variables["uko"]
+vke_ 	= fh.variables["vke"]
+lat_2_ 	= fh.variables["lat_2"]
+lon_2_ 	= fh.variables["lon_2"]
+lat_3_ 	= fh.variables["lat_3"]
+lon_3_ 	= fh.variables["lon_3"]
+
+uko = uko_[0,0,:,:].copy()
+vke = vke_[0,0,:,:].copy()
+lat_2 = lat_2_[:,:].copy()
+lon_2 = lon_2_[:,:].copy()
+lat_3 = lat_3_[:,:].copy()
+lon_3 = lon_3_[:,:].copy()
+
+[cline_s,cline,coastline] = coasti.smooth_coastline(filename)
+[tangent, normal] = coasti.compute_normals(cline_s)
+
+np.ma.set_fill_value(uko,0.)
+
+uper = np.zeros((uko.shape))
+upar = np.zeros((uko.shape))
+minimal = np.zeros((uko.shape))
+minimaly = np.zeros((uko.shape))
+for x in range(min(vke.shape[1],uko.shape[1])):
+	for y in range(min(vke.shape[0],uko.shape[0])):
+		if uko.mask[y,x] == False and vke.mask[y,x] == False and lon_2[y,x] >= (cline_s[y,1]-1):
+			dist = abs(lon_2[y,x] -cline_s[y,1])
+			[minimaldist, ymin] = coasti.check_neighbours(x,y,cline_s,dist,lon_2,lat_2)
+			minimal[y,x] = minimaldist
+			minimaly[y,x] = ymin
+			#print minimaldist
+			if (ymin-1) >0 and (ymin+1) < min(vke.shape[0],uko.shape[0]):
+				nx = normal[ymin-1,1]/4 + normal[ymin,1]/2 + normal[ymin+1,1]/4
+				ny = normal[ymin-1,0]/4 + normal[ymin,0]/2 + normal[ymin+1,0]/4
+				tx = tangent[ymin-1,1]/4 + tangent[ymin,1]/2 + tangent[ymin+1,1]/4
+				ty = tangent[ymin-1,0]/4 + tangent[ymin,0]/2 + tangent[ymin+1,0]/4
+			else:
+				nx = normal[ymin,1]
+				ny = normal[ymin,0]
+				tx = tangent[ymin,1]
+				ty = tangent[ymin,0]
+			if np.sign(ny) == np.sign(vke[y,x]):
+				uper[y,x] = nx*uko[y,x] + ny*vke[y,x]
+			else:
+				uper[y,x] = nx*uko[y,x] - ny*vke[y,x]
+			if np.sign(tx) == np.sign(uko[y,x]):
+				upar[y,x] = ty*vke[y,x] + tx*uko[y,x]
+			else:
+				upar[y,x] = ty*vke[y,x] - tx*uko[y,x]
+
+for x in range(min(vke.shape[1],uko.shape[1])):
+	for y in range(min(vke.shape[0],uko.shape[0])):
+		if uko.mask[y,x] == False and vke.mask[y,x] == False and lon_2[y,x] >= cline_s[y,1]-1:
+			dist = abs(lon_2[y,x] -cline[y,1])
+			[minimaldist, ymin] = coasti.check_neighbours(x,y,cline,dist,lon_2,lat_2)
+			minimal[y,x] = minimaldist
+			minimaly[y,x] = ymin
+
+# Set all the missing values to zero
+for x in range(min(vke.shape[1],uko.shape[1])):
+	for y in range(min(vke.shape[0],uko.shape[0])):
+		if abs(upar[y,x]) > 100.:
+			upar[y,x] = 0.
+		if abs(uper[y,x]) > 100.:
+			uper[y,x] = 0.
+
+upar = -upar
+uper = -uper
+
+along 	= np.zeros((uko.shape[0],100)) # take only 100 across points
+across	= np.zeros((uko.shape[0],100))
+data1	= np.zeros((uko.shape[0],100))
+data2	= np.zeros((uko.shape[0],100))
+data3	= np.zeros((uko.shape[0],100))
+data4	= np.zeros((uko.shape[0],100))
+arc = coasti.arc_length(cline_s)
+
+for y in range(10,uko.shape[0]-10):
+	i = 0
+	for x in range(5,uko.shape[1]-5):
+		if minimal[y,x] >= 0.1 and minimal[y,x] < 6 and i < 100 and uko.mask[y,x] == False:
+			a = arc[minimaly[y,x]]
+			along[y,i]=a[0]
+			across[y,i]	= minimal[y,x]
+			data1[y,i] 	= upar[y,x]
+			data2[y,i] 	= uper[y,x]
+			data3[y,i] 	= uko[y,x]
+			data4[y,i] 	= vke[y,x]
+			i = i+1
+			
+data1[data1 == 0] = np.nan
+data2[data2 == 0] = np.nan
+data3[data3 == 0] = np.nan
+data4[data4 == 0] = np.nan
+#along[along == 0] = np.nan
+#across[across == 0] = np.nan
+
+acr = across.copy()
+for y in range(across.shape[0]):
+	acr[y,:] = across[y,:] - across[y,0]
+	#window_len = 3
+	#tmp = coasti.smooth(across[:,0],window_len,"hanning")
+	#tmp2 = tmp[window_len/2-1:across.shape[0]+window_len/2-1]
+	#acr[y,:] = across[y,:] - tmp2[y]
+
+c = decplot.along_across(along,across,data1)
+c.savefig("along_across.png")
+
+##def plots(lon_2,lat_2,upar,uper):
+
+#figure3 = plt.figure(3)
+##figure3.suptitle('Coast parallel', fontsize=20)
+#decompo 	= plt.contour(lon_2,lat_2,upar,50)
+#plt.clim(-0.15,0.15)
+#CB		= plt.colorbar(decompo) 
+#plt.show()
+##figure3.savefig(filename+"_upar.png")
+
+#figure4 = plt.figure(4)
+#figure4.suptitle('Coast perpendicular', fontsize=20)
+#decompo 	= plt.contour(lon_2,lat_2,uper,50)
+#CB		= plt.colorbar(decompo) 
+#plt.show()
+##return[figure3,figure4]
+##figure4.savefig(filename+"_uper.png")
+
